@@ -1,10 +1,13 @@
-import argparse, glob, json, os, time
+import argparse, glob, json, os, queue, tempfile, threading, time
 from collections import defaultdict
 
 import av
 import numpy as np
 import pyarrow.parquet as pq
 from ultralytics import YOLO
+from ultralytics.utils import LOGGER
+
+LOGGER.setLevel("ERROR")
 
 NAMES = {0: "person", 2: "car", 16: "dog", 63: "laptop", 67: "cell phone"}
 CLASSES = list(NAMES.keys())
@@ -43,6 +46,29 @@ def decode_video(path):
     c.close()
 
 
+def prefetch(gen, size=256):
+    """Run a generator in a background thread so decoding overlaps with the GPU."""
+    q = queue.Queue(maxsize=size)
+    END = object()
+
+    def worker():
+        try:
+            for item in gen:
+                q.put(item)
+        except Exception as e:
+            q.put(e)
+        q.put(END)
+
+    threading.Thread(target=worker, daemon=True).start()
+    while True:
+        item = q.get()
+        if item is END:
+            return
+        if isinstance(item, Exception):
+            raise item
+        yield item
+
+
 def summarize(by_sec):
     """Turn {second: [per-frame class lists]} into output rows."""
     rows = []
@@ -72,7 +98,7 @@ def process_video(model, mp4_bytes, tmp_path):
         if not buf_f:
             return
         res = model.predict(buf_f, imgsz=640, conf=0.4, iou=0.7,
-                            classes=CLASSES, half=True , verbose=False)
+                            classes=CLASSES, half=True, verbose=False)
         for t, r in zip(buf_t, res):
             by_sec[int(t)].append([int(b) for b in r.boxes.cls.tolist()])
         buf_f.clear()
@@ -80,7 +106,7 @@ def process_video(model, mp4_bytes, tmp_path):
 
     err = None
     try:
-        for t, img in decode_video(tmp_path):
+        for t, img in prefetch(decode_video(tmp_path)):
             buf_f.append(img)
             buf_t.append(t)
             if len(buf_f) >= BATCH:
@@ -102,7 +128,7 @@ def main():
     args = ap.parse_args()
 
     model = YOLO("yolo11l.pt")
-    tmp_path = "/tmp/_video.mp4"
+    tmp_path = os.path.join(tempfile.gettempdir(), f"_video_{os.getpid()}.mp4")
     files = sorted(glob.glob(os.path.join(args.input, "*.parquet")))
     start = time.time()
     with open(args.output, "w") as out:
