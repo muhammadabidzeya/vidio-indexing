@@ -83,7 +83,7 @@ def summarize(by_sec):
                 if sum(1 for d in fl if k in d) * 2 >= n:
                     objects.append(NAMES[k])
             counts = sorted(d.count(0) for d in fl)
-            people = counts[(n - 1) // 2]
+            people = counts[n // 2] if n % 2 else (counts[n // 2 - 1] + counts[n // 2]) // 2
         rows.append({"video": None, "second": sec, "objects": objects, "people": people})
     return rows
 
