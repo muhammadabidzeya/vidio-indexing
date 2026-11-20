@@ -72,7 +72,7 @@ def process_video(model, mp4_bytes, tmp_path):
         if not buf_f:
             return
         res = model.predict(buf_f, imgsz=640, conf=0.4, iou=0.7,
-                            classes=CLASSES, verbose=False)
+                            classes=CLASSES, half=True , verbose=False)
         for t, r in zip(buf_t, res):
             by_sec[int(t)].append([int(b) for b in r.boxes.cls.tolist()])
         buf_f.clear()
